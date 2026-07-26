@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marcar/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/router"
 )
 
 // Command represents a slash command available in the TUI.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/marcar/cude/internal/backend"
-	"github.com/marcar/cude/internal/config"
+	"github.com/MARCAAAAARRON/cude/internal/backend"
+	"github.com/MARCAAAAARRON/cude/internal/config"
 )
 
 var (

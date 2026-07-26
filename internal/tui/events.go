@@ -3,7 +3,7 @@ package tui
 import (
 	"context"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/marcar/cude/internal/agent"
+	"github.com/MARCAAAAARRON/cude/internal/agent"
 )
 
 // AgentMsg is a Bubble Tea wrapper for agent events.

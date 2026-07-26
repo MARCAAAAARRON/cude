@@ -6,7 +6,7 @@ import (
 
 	ollamaapi "github.com/ollama/ollama/api"
 
-	"github.com/marcar/cude/internal/backend"
+	"github.com/MARCAAAAARRON/cude/internal/backend"
 )
 
 // Backend implements backend.Backend for Ollama.

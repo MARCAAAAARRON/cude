@@ -4,8 +4,8 @@ import (
 	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/marcar/cude/internal/agent"
-	"github.com/marcar/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/agent"
+	"github.com/MARCAAAAARRON/cude/internal/router"
 )
 
 // Run launches the TUI with the given agent core. It blocks until the TUI exits.

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/marcar/cude/internal/agent"
-	"github.com/marcar/cude/internal/config"
-	"github.com/marcar/cude/internal/project"
-	"github.com/marcar/cude/internal/router"
-	"github.com/marcar/cude/internal/tools"
-	"github.com/marcar/cude/internal/tui"
+	"github.com/MARCAAAAARRON/cude/internal/agent"
+	"github.com/MARCAAAAARRON/cude/internal/config"
+	"github.com/MARCAAAAARRON/cude/internal/project"
+	"github.com/MARCAAAAARRON/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/tools"
+	"github.com/MARCAAAAARRON/cude/internal/tui"
 )
 
 // Build-time variables — injected via -ldflags by Makefile / GoReleaser.

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/marcar/cude/internal/backend"
-	"github.com/marcar/cude/internal/backend/anthropic"
-	"github.com/marcar/cude/internal/backend/ollama"
-	"github.com/marcar/cude/internal/backend/openai"
-	"github.com/marcar/cude/internal/config"
+	"github.com/MARCAAAAARRON/cude/internal/backend"
+	"github.com/MARCAAAAARRON/cude/internal/backend/anthropic"
+	"github.com/MARCAAAAARRON/cude/internal/backend/ollama"
+	"github.com/MARCAAAAARRON/cude/internal/backend/openai"
+	"github.com/MARCAAAAARRON/cude/internal/config"
 )
 
 // Router manages backend instances and handles fallback/escalation logic.

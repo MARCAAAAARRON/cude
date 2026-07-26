@@ -1,4 +1,4 @@
-module github.com/marcar/cude
+module github.com/MARCAAAAARRON/cude
 
 go 1.26.5
 

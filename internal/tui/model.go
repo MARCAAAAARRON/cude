@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	
-	"github.com/marcar/cude/internal/agent"
-	"github.com/marcar/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/agent"
+	"github.com/MARCAAAAARRON/cude/internal/router"
 )
 
 const (

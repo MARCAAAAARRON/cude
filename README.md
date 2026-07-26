@@ -98,6 +98,12 @@ make build
 ./bin/cude
 ```
 
+**Go install:**
+
+```bash
+go install github.com/MARCAAAAARRON/cude/cmd/cude@latest
+```
+
 **From GitHub Releases (Linux/macOS):**
 
 ```bash

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/marcar/cude/internal/backend"
-	"github.com/marcar/cude/internal/tokens"
+	"github.com/MARCAAAAARRON/cude/internal/backend"
+	"github.com/MARCAAAAARRON/cude/internal/tokens"
 )
 
 // ContextScheduler manages token budget allocation across the prompt
