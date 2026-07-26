@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/cude.png" alt="CUDE Banner" />
+  <img src="public/CUDE.png" alt="CUDE Banner" />
   <br/><br/>
   <strong>Hybrid local/API coding agent for your terminal.</strong>
   <br/>
