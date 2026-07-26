@@ -372,8 +372,8 @@ func (m *Model) recalcLayout() {
 	} else {
 		// Calculate 30% of width
 		targetWidth := int(float64(m.width) * 0.30)
-		if targetWidth < 25 {
-			targetWidth = 25
+		if targetWidth < 38 {
+			targetWidth = 38
 		} else if targetWidth > 45 {
 			targetWidth = 45
 		}
@@ -553,9 +553,6 @@ func (m Model) renderBanner() string {
 }
 
 func (m Model) renderSmallBanner(width int) string {
-	if width < 38 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render("\n CUDE \n")
-	}
 	banner := `
  ██████  ██    ██  ██████   ███████ 
  ██      ██    ██  ██   ██  ██      
