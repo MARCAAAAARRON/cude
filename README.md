@@ -1,13 +1,5 @@
 <p align="center">
-  <br/>
-  <code>
- ██████╗██╗   ██╗██████╗ ███████╗
-██╔════╝██║   ██║██╔══██╗██╔════╝
-██║     ██║   ██║██║  ██║█████╗
-██║     ██║   ██║██║  ██║██╔══╝
-╚██████╗╚██████╔╝██████╔╝███████╗
- ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-  </code>
+  <img src="public/cude.png" alt="CUDE Banner" />
   <br/><br/>
   <strong>Hybrid local/API coding agent for your terminal.</strong>
   <br/>
