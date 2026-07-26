@@ -450,7 +450,7 @@ func (m Model) sidebarView() string {
 	width := m.sidebarWidth - 2 // account for borders
 
 	// Banner
-	bannerStr := m.renderSmallBanner()
+	bannerStr := m.renderSmallBanner(width)
 	bannerBox := lipgloss.NewStyle().Align(lipgloss.Center).Width(width).Render(bannerStr)
 
 	// Context progress bar
@@ -552,7 +552,10 @@ func (m Model) renderBanner() string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render(banner)
 }
 
-func (m Model) renderSmallBanner() string {
+func (m Model) renderSmallBanner(width int) string {
+	if width < 38 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render("\n CUDE \n")
+	}
 	banner := `
  ██████  ██    ██  ██████   ███████ 
  ██      ██    ██  ██   ██  ██      
