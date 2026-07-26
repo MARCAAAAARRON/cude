@@ -13,12 +13,12 @@ import (
 
 // Router manages backend instances and handles fallback/escalation logic.
 type Router struct {
-	cfg      config.Config
+	cfg      *config.Config
 	backends map[string]backend.Backend
 }
 
 // New creates a router and initializes the default backend.
-func New(cfg config.Config) (*Router, error) {
+func New(cfg *config.Config) (*Router, error) {
 	r := &Router{
 		cfg:      cfg,
 		backends: make(map[string]backend.Backend),
@@ -73,6 +73,11 @@ func (r *Router) ModelNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Config returns the active config.
+func (r *Router) Config() *config.Config {
+	return r.cfg
 }
 
 // Close gracefully shuts down all initialized backends.

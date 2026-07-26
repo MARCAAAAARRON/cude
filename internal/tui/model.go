@@ -3,6 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +16,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	
 	"github.com/MARCAAAAARRON/cude/internal/agent"
+	"github.com/MARCAAAAARRON/cude/internal/config"
+	"github.com/MARCAAAAARRON/cude/internal/project"
 	"github.com/MARCAAAAARRON/cude/internal/router"
 )
 
@@ -28,7 +34,7 @@ type Model struct {
 	viewport      viewport.Model
 	textInput     textinput.Model
 	
-	conversation  []string
+	conversation  []ChatMessage
 	currResponse  string
 	
 	status        status
@@ -62,6 +68,16 @@ type Model struct {
 	// Layout State
 	showSidebar  bool
 	sidebarWidth int
+	chatWidth    int
+
+	// Wizard State
+	inWizard   bool
+	wizardStep int
+	wizardMode string
+	tempModel  config.ModelConfig
+	tempName   string
+	
+	config     *config.Config
 }
 
 type UndoItem struct {
@@ -90,11 +106,32 @@ const (
 	StateLocal
 )
 
+func (s AgentState) String() string {
+	switch s {
+	case StateAPI:
+		return "Thinking (API)..."
+	case StateLocal:
+		return "Thinking (Local)..."
+	default:
+		return "Idle"
+	}
+}
+
+type ChatMessage struct {
+	Role  string
+	Text  string
+	Color string
+}
+
 type status struct {
-	model   string
-	backend string
-	ctxUsed string
-	state   AgentState
+	model        string
+	backend      string
+	ctxUsed      string
+	state        AgentState
+	projName     string
+	gitBranch    string
+	reqStartTime time.Time
+	latency      time.Duration
 }
 
 func New(ctx context.Context, a *agent.Agent) Model {
@@ -105,18 +142,34 @@ func New(ctx context.Context, a *agent.Agent) Model {
 	ti.Focus()
 	
 	defaultTheme := ThemeColors{
-		Primary:    "#d500ff",
-		Secondary:  "46",
+		Primary:    "255",
+		Secondary:  "245",
 		Muted:      "240",
-		Text:       "255",
-		Error:      "196",
-		Warning:    "226",
-		Success:    "46",
-		Background: "232",
-		UserLabel:  "46",
-		BotLabel:   "#d500ff",
+		Text:       "250",
+		Error:      "255",
+		Warning:    "245",
+		Success:    "255",
+		Background: "234",
+		UserLabel:  "255",
+		BotLabel:   "245",
 	}
 	
+	projName := "unknown"
+	gitBranch := "-"
+	
+	if cwd, err := os.Getwd(); err == nil {
+		if p, err := project.Detect(cwd); err == nil {
+			projName = filepath.Base(p.Root)
+			if p.Type != "" && p.Type != "unknown" {
+				projName += fmt.Sprintf(" (%s)", p.Type)
+			}
+		}
+	}
+	
+	if out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+		gitBranch = strings.TrimSpace(string(out))
+	}
+
 	return Model{
 		ctx:    ctx,
 		cancel: cancel,
@@ -124,13 +177,15 @@ func New(ctx context.Context, a *agent.Agent) Model {
 		
 		textInput: ti,
 		theme:     defaultTheme,
-		currentTheme: "neon",
+		currentTheme: "mono",
 		
 		status: status{
-			model:   "loading...",
-			backend: "loading...",
-			ctxUsed: "0/?",
-			state:   StateIdle,
+			model:        "loading...",
+			backend:      "loading...",
+			ctxUsed:      "0/?",
+			state:        StateIdle,
+			projName:     projName,
+			gitBranch:    gitBranch,
 		},
 		splashUntil:  time.Now().Add(splashDuration),
 		showSidebar:  true,
@@ -141,6 +196,9 @@ func New(ctx context.Context, a *agent.Agent) Model {
 // SetRouter sets the router for slash commands (needs to be called from main.go)
 func (m *Model) SetRouter(r *router.Router) {
 	m.cmdRegistry = NewCommandRegistry(r)
+	if r != nil {
+		m.config = r.Config()
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -165,15 +223,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y", "Y":
 				m.approveReq.Response <- true
 				m.waitingApprove = false
-				m.conversation = append(m.conversation, IconOK+" Approved")
-				m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-				m.viewport.GotoBottom()
+				m.addMessage(IconOK+" Approved", m.theme.Success)
 			case "n", "N":
 				m.approveReq.Response <- false
 				m.waitingApprove = false
-				m.conversation = append(m.conversation, IconFail+" Denied")
-				m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-				m.viewport.GotoBottom()
+				m.addMessage(IconFail+" Denied", m.theme.Error)
 			case "ctrl+c":
 				m.quitting = true
 				m.cancel()
@@ -204,6 +258,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if val != "" {
 				m.textInput.SetValue("")
 				
+				if m.inWizard {
+					m.handleWizardInput(val)
+					return m, nil
+				}
+				
 				if IsCommand(val) {
 					if m.cmdRegistry != nil {
 						cmdName, args := ParseCommand(val)
@@ -214,24 +273,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								return m, tea.Quit
 							}
 							if result != "" {
-								m.conversation = append(m.conversation, lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Text)).Render(result))
-								m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-								m.viewport.GotoBottom()
+								m.addMessage(result, m.theme.Text)
 							}
 						} else {
-							m.conversation = append(m.conversation, lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Error)).Render(fmt.Sprintf(IconFail+" Unknown command: /%s. Type /help for a list.", cmdName)))
-							m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-							m.viewport.GotoBottom()
+							m.addMessage(fmt.Sprintf(IconFail+" Unknown command: /%s. Type /help for a list.", cmdName), m.theme.Error)
 						}
 					}
 					return m, nil
 				}
 
-				m.conversation = append(m.conversation, lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.UserLabel)).Render("you: ")+val)
-				m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-				m.viewport.GotoBottom()
+				m.conversation = append(m.conversation, ChatMessage{Role: "you", Text: val, Color: m.theme.UserLabel})
+				m.refreshChat()
 				
 				m.status.state = StateAPI // TODO: get from actual capability
+				m.status.reqStartTime = time.Now()
 				m.currResponse = ""
 				
 				cmds = append(cmds, startAgent(m.ctx, m.agent, val))
@@ -253,21 +308,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch e := msg.Event.(type) {
 		case agent.StreamTokenEvent:
 			m.currResponse += e.Token
-			// Rebuild the conversation view with the partial response.
-			viewContent := strings.Join(m.conversation, "\n\n")
-			if m.currResponse != "" {
-				viewContent += "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(m.currResponse)
-			}
-			m.viewport.SetContent(viewContent)
-			m.viewport.GotoBottom()
+			m.refreshChat()
 			
 		case agent.ToolCallEvent:
 			callStr := fmt.Sprintf("🔧 Running tool: %s\n%s", e.Name, e.Args)
-			styled := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(callStr)
-			m.conversation = append(m.conversation, styled)
+			m.conversation = append(m.conversation, ChatMessage{Text: callStr, Color: "240"})
 			m.currResponse = "" // clear current streaming response buffer
-			m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-			m.viewport.GotoBottom()
+			m.refreshChat()
 
 		case agent.ToolResultEvent:
 			// Optionally log result, often too long.
@@ -276,10 +323,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.waitingApprove = true
 			m.approveReq = e
 			reqStr := fmt.Sprintf("⚠️ The agent wants to execute %s.\n\n%s\n\nAllow this? (y/n)", e.Type, e.Preview)
-			styled := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(reqStr)
-			m.conversation = append(m.conversation, styled)
-			m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-			m.viewport.GotoBottom()
+			m.conversation = append(m.conversation, ChatMessage{Text: reqStr, Color: "220"})
+			m.refreshChat()
 			
 		case agent.StatusEvent:
 			m.status.model = e.Model
@@ -289,15 +334,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case agent.DoneEvent:
 			m.status.state = StateIdle
 			if m.currResponse != "" {
-				m.conversation = append(m.conversation, lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Text)).Render(m.currResponse))
+				m.conversation = append(m.conversation, ChatMessage{Text: m.currResponse, Color: m.theme.Text})
 				m.currResponse = ""
 			}
 			if e.Error != nil {
-				errStr := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Error)).Render(fmt.Sprintf(IconFail+" Error: %v", e.Error))
-				m.conversation = append(m.conversation, errStr)
+				errStr := fmt.Sprintf(IconFail+" Error: %v", e.Error)
+				m.conversation = append(m.conversation, ChatMessage{Text: errStr, Color: m.theme.Error})
 			}
-			m.viewport.SetContent(strings.Join(m.conversation, "\n\n"))
-			m.viewport.GotoBottom()
+			m.refreshChat()
 		}
 		
 		// Continue polling for agent events
@@ -322,16 +366,30 @@ func (m *Model) recalcLayout() {
 		return
 	}
 
+	// Dynamic sidebar sizing
+	if m.width < 60 {
+		m.showSidebar = false
+	} else {
+		// Calculate 30% of width
+		targetWidth := int(float64(m.width) * 0.30)
+		if targetWidth < 25 {
+			targetWidth = 25
+		} else if targetWidth > 45 {
+			targetWidth = 45
+		}
+		m.sidebarWidth = targetWidth
+	}
+
 	// Calculate widths
-	chatWidth := m.width
+	m.chatWidth = m.width
 	if m.showSidebar {
-		chatWidth = m.width - m.sidebarWidth
+		m.chatWidth = m.width - m.sidebarWidth
 	}
 	// Subtract borders (2 for left/right border, maybe 2 for padding)
-	chatWidth -= 4 
+	m.chatWidth -= 4 
 
-	if chatWidth < 10 {
-		chatWidth = 10
+	if m.chatWidth < 10 {
+		m.chatWidth = 10
 	}
 
 	// Calculate heights
@@ -344,13 +402,15 @@ func (m *Model) recalcLayout() {
 	}
 
 	if !m.ready {
-		m.viewport = viewport.New(chatWidth, vpHeight)
+		m.viewport = viewport.New(m.chatWidth, vpHeight)
 		m.ready = true
 	} else {
-		m.viewport.Width = chatWidth
+		m.viewport.Width = m.chatWidth
 		m.viewport.Height = vpHeight
 	}
 	m.textInput.Width = m.width - 4
+	
+	m.refreshChat()
 }
 
 func (m Model) View() string {
@@ -460,8 +520,17 @@ func (m Model) inputView() string {
 }
 
 func (m Model) renderProgressBar(ctxUsed string, width int) string {
-	// Simple stub for now. Ideally parse ctxUsed "1200/8000"
-	pct := 0.2 // placeholder
+	pct := 0.0
+	parts := strings.Split(ctxUsed, "/")
+	if len(parts) == 2 {
+		used, _ := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+		total, _ := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+		if total > 0 {
+			pct = used / total
+		}
+	}
+	if pct > 1.0 { pct = 1.0 }
+	
 	filled := int(float64(width) * pct)
 	empty := width - filled
 	if filled < 0 { filled = 0 }
@@ -492,4 +561,177 @@ func (m Model) renderSmallBanner() string {
  ██████  ████████  ██████   ███████ 
 `
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render(banner)
+}
+
+func (m *Model) refreshChat() {
+	var rendered []string
+	
+	style := lipgloss.NewStyle().Width(m.chatWidth)
+	
+	for _, msg := range m.conversation {
+		text := msg.Text
+		if msg.Role != "" {
+			text = msg.Role + ": " + text
+		}
+		styledMsg := lipgloss.NewStyle().Foreground(lipgloss.Color(msg.Color)).Render(text)
+		wrapped := style.Render(styledMsg)
+		rendered = append(rendered, wrapped)
+	}
+	
+	if m.currResponse != "" {
+		streaming := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(m.currResponse)
+		rendered = append(rendered, style.Render(streaming))
+	}
+	
+	m.viewport.SetContent(strings.Join(rendered, "\n\n"))
+	m.viewport.GotoBottom()
+}
+
+func (m *Model) addMessage(text string, color string) {
+	m.conversation = append(m.conversation, ChatMessage{Text: text, Color: color})
+	m.refreshChat()
+}
+
+func (m *Model) handleWizardInput(input string) {
+	if strings.ToLower(input) == "/cancel" {
+		m.inWizard = false
+		m.addMessage(IconFail + " Wizard cancelled.", m.theme.Warning)
+		return
+	}
+
+	m.addMessage("> "+input, m.theme.UserLabel)
+
+	if m.wizardMode == "add-model" {
+		m.handleAddModelWizard(input)
+	} else if m.wizardMode == "remove-model" {
+		m.handleRemoveModelWizard(input)
+	}
+}
+
+func (m *Model) handleAddModelWizard(input string) {
+	switch m.wizardStep {
+	case 1:
+		m.tempName = input
+		m.wizardStep = 2
+		m.addMessage(fmt.Sprintf("Great, we will call it '%s'.\nWhat backend does it use? (options: ollama, anthropic, openai)", m.tempName), m.theme.BotLabel)
+	case 2:
+		input = strings.ToLower(input)
+		if input != "ollama" && input != "anthropic" && input != "openai" {
+			m.addMessage("Invalid backend. Please enter 'ollama', 'anthropic', or 'openai':", m.theme.Error)
+			return
+		}
+		m.tempModel.Backend = input
+		m.wizardStep = 3
+		if input == "ollama" {
+			m.addMessage("What is the model identifier? (e.g., 'llama3.2:3b')", m.theme.BotLabel)
+		} else if input == "anthropic" {
+			m.addMessage("What is the model identifier? (e.g., 'claude-3-5-sonnet-20240620')", m.theme.BotLabel)
+		} else {
+			m.addMessage("What is the model identifier? (e.g., 'gpt-4o' or your local model name)", m.theme.BotLabel)
+		}
+	case 3:
+		m.tempModel.Model = input
+		m.wizardStep = 4
+		if m.tempModel.Backend == "ollama" || m.tempModel.Backend == "openai" {
+			defEndpoint := "http://localhost:11434"
+			if m.tempModel.Backend == "openai" {
+				defEndpoint = "https://api.openai.com/v1"
+			}
+			m.addMessage(fmt.Sprintf("What is the API endpoint?\n(Leave empty for default: %s)\n(Tip: For local servers like LM Studio or vLLM, ensure you include /v1, e.g. http://localhost:1234/v1)", defEndpoint), m.theme.BotLabel)
+		} else {
+			m.wizardStep = 5
+			m.addMessage("What is the API key? (You can use e.g. '$ANTHROPIC_API_KEY')", m.theme.BotLabel)
+		}
+	case 4:
+		if input == "" {
+			if m.tempModel.Backend == "ollama" {
+				m.tempModel.Endpoint = "http://localhost:11434"
+			} else {
+				m.tempModel.Endpoint = "https://api.openai.com/v1"
+			}
+		} else {
+			m.tempModel.Endpoint = input
+		}
+		
+		if m.tempModel.Backend == "ollama" {
+			m.wizardStep = 6
+			m.addMessage("What is the context window size? (e.g. 8192)", m.theme.BotLabel)
+		} else {
+			m.wizardStep = 5
+			m.addMessage("What is the API key? (You can use e.g. '$OPENAI_API_KEY')", m.theme.BotLabel)
+		}
+	case 5:
+		m.tempModel.APIKey = input
+		m.wizardStep = 6
+		m.addMessage("What is the context window size? (e.g. 8192 or 128000)", m.theme.BotLabel)
+	case 6:
+		var ctxWin int
+		_, err := fmt.Sscanf(input, "%d", &ctxWin)
+		if err != nil || ctxWin <= 0 {
+			m.addMessage("Please enter a valid positive number:", m.theme.Error)
+			return
+		}
+		m.tempModel.ContextWindow = ctxWin
+		m.wizardStep = 7
+		
+		if m.tempModel.Backend == "ollama" {
+			m.tempModel.Tier = "local"
+			m.finishAddModel()
+		} else {
+			m.addMessage("Is this a 'local' or 'api' tier model? (api tier enables tool calling functions)", m.theme.BotLabel)
+		}
+	case 7:
+		input = strings.ToLower(input)
+		if input != "local" && input != "api" {
+			m.addMessage("Please enter 'local' or 'api':", m.theme.Error)
+			return
+		}
+		m.tempModel.Tier = input
+		m.finishAddModel()
+	}
+}
+
+func (m *Model) finishAddModel() {
+	if m.config != nil {
+		m.config.AddOrUpdateModel(m.tempName, m.tempModel)
+		err := m.config.Save()
+		if err != nil {
+			m.addMessage(fmt.Sprintf(IconFail + " Failed to save config: %v", err), m.theme.Error)
+		} else {
+			m.addMessage(fmt.Sprintf(IconOK + " Saved model '%s' to %s", m.tempName, m.config.LoadedPath), m.theme.Success)
+		}
+	} else {
+		m.addMessage(IconFail + " Could not save: config reference is nil.", m.theme.Error)
+	}
+	m.inWizard = false
+}
+
+func (m *Model) handleRemoveModelWizard(input string) {
+	if m.config == nil {
+		m.addMessage(IconFail + " Could not remove: config reference is nil.", m.theme.Error)
+		m.inWizard = false
+		return
+	}
+	
+	if input == "" {
+		m.addMessage("Operation cancelled.", m.theme.Warning)
+		m.inWizard = false
+		return
+	}
+	
+	_, err := m.config.LookupModel(input)
+	if err != nil {
+		m.addMessage(fmt.Sprintf("Model '%s' not found. Cancelled.", input), m.theme.Error)
+		m.inWizard = false
+		return
+	}
+	
+	m.config.RemoveModel(input)
+	err = m.config.Save()
+	if err != nil {
+		m.addMessage(fmt.Sprintf(IconFail + " Failed to save config: %v", err), m.theme.Error)
+	} else {
+		m.addMessage(fmt.Sprintf(IconOK + " Removed model '%s' and saved %s", input, m.config.LoadedPath), m.theme.Success)
+	}
+	m.inWizard = false
 }

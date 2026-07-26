@@ -3,6 +3,8 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"net/url"
+	"strings"
 
 	openaiapi "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -25,6 +27,11 @@ type Backend struct {
 func New(endpoint, apiKey, model string, contextWindow int, tier string) (*Backend, error) {
 	opts := []option.RequestOption{}
 	if endpoint != "" {
+		u, err := url.Parse(endpoint)
+		if err == nil && (u.Path == "" || u.Path == "/") {
+			// Auto-append /v1 for common local OpenAI-compatible servers (LM Studio, vLLM, etc.)
+			endpoint = strings.TrimRight(endpoint, "/") + "/v1"
+		}
 		opts = append(opts, option.WithBaseURL(endpoint))
 	}
 	if apiKey != "" {

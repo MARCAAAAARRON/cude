@@ -1,0 +1,5 @@
+bin/
+cude.toml
+*.py
+*.txt
+.DS_Store

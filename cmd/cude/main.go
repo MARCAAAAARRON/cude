@@ -47,7 +47,7 @@ func main() {
 	}
 
 	// 2. Initialize Model Router
-	r, err := router.New(cfg)
+	r, err := router.New(&cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cude: router error: %v\n", err)
 		os.Exit(1)

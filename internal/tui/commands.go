@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MARCAAAAARRON/cude/internal/config"
 	"github.com/MARCAAAAARRON/cude/internal/router"
 )
 
@@ -406,6 +407,62 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 		Description: "Exit cude",
 		Handler: func(m *Model, args string) string {
 			m.quitting = true
+			return ""
+		},
+	})
+	// /add-model
+	cr.Register(&Command{
+		Name:        "add-model",
+		Description: "Add a new model configuration interactively",
+		Handler: func(m *Model, args string) string {
+			if m.config == nil {
+				return IconFail + " Config is not available."
+			}
+			m.inWizard = true
+			m.wizardMode = "add-model"
+			m.wizardStep = 1
+			m.tempModel = config.ModelConfig{}
+			m.tempName = ""
+			m.addMessage("Welcome to the Add Model wizard! (Type /cancel to abort at any time)", m.theme.Warning)
+			m.addMessage("What name would you like to give this model? (e.g. 'my-local-llama')", m.theme.BotLabel)
+			return ""
+		},
+	})
+
+	// /remove-model
+	cr.Register(&Command{
+		Name:        "remove-model",
+		Description: "Remove a model configuration",
+		Handler: func(m *Model, args string) string {
+			if m.config == nil {
+				return IconFail + " Config is not available."
+			}
+			if args != "" {
+				// Remove immediately without wizard if name provided
+				_, err := m.config.LookupModel(args)
+				if err != nil {
+					return fmt.Sprintf(IconFail + " Model '%s' not found.", args)
+				}
+				m.config.RemoveModel(args)
+				err = m.config.Save()
+				if err != nil {
+					return fmt.Sprintf(IconFail + " Failed to save config: %v", err)
+				}
+				return fmt.Sprintf(IconOK + " Removed model '%s' and saved.", args)
+			}
+			
+			m.inWizard = true
+			m.wizardMode = "remove-model"
+			m.wizardStep = 1
+			m.addMessage("Welcome to the Remove Model wizard! (Type /cancel to abort)", m.theme.Warning)
+			
+			var b strings.Builder
+			b.WriteString("Available models to remove:\n")
+			for k := range m.config.Models {
+				b.WriteString("  - " + k + "\n")
+			}
+			b.WriteString("\nWhich model would you like to remove?")
+			m.addMessage(b.String(), m.theme.BotLabel)
 			return ""
 		},
 	})

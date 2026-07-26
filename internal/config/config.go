@@ -16,6 +16,8 @@ type Config struct {
 	Models         map[string]ModelConfig `toml:"models"`
 	Agent          AgentConfig            `toml:"agent"`
 	TUI            TUIConfig              `toml:"tui"`
+
+	LoadedPath     string                 `toml:"-"`
 }
 
 // ModelConfig describes a single model endpoint.
@@ -53,10 +55,17 @@ func (m ModelConfig) IsLocal() bool {
 // ResolvedAPIKey expands environment variable references in the api_key field.
 // If the key starts with "$", it is treated as an env var name.
 func (m ModelConfig) ResolvedAPIKey() string {
-	if strings.HasPrefix(m.APIKey, "$") {
-		return os.Getenv(m.APIKey[1:])
+	key := m.APIKey
+	if strings.HasPrefix(key, `"`) && strings.HasSuffix(key, `"`) {
+		key = strings.Trim(key, `"`)
 	}
-	return m.APIKey
+	if strings.HasPrefix(key, `'`) && strings.HasSuffix(key, `'`) {
+		key = strings.Trim(key, `'`)
+	}
+	if strings.HasPrefix(key, "$") {
+		return os.Getenv(key[1:])
+	}
+	return key
 }
 
 // DefaultConfig returns sensible defaults when no config file is found.
@@ -109,7 +118,14 @@ func Load(explicitPath string) (Config, error) {
 			return loadFromFile(path)
 		}
 	}
-	return DefaultConfig(), nil
+	
+	cfg := DefaultConfig()
+	if home, err := os.UserHomeDir(); err == nil {
+		cfg.LoadedPath = filepath.Join(home, ".config", "cude", "cude.toml")
+	} else {
+		cfg.LoadedPath = "cude.toml"
+	}
+	return cfg, nil
 }
 
 func loadFromFile(path string) (Config, error) {
@@ -121,6 +137,7 @@ func loadFromFile(path string) (Config, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("config: parse %s: %w", path, err)
 	}
+	cfg.LoadedPath = path
 	return cfg, nil
 }
 
@@ -140,4 +157,36 @@ func (c Config) modelNames() string {
 		names = append(names, k)
 	}
 	return strings.Join(names, ", ")
+}
+
+// Save writes the current configuration to LoadedPath.
+func (c *Config) Save() error {
+	if c.LoadedPath == "" {
+		return fmt.Errorf("no config path available to save")
+	}
+	dir := filepath.Dir(c.LoadedPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(c.LoadedPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return toml.NewEncoder(f).Encode(c)
+}
+
+// AddOrUpdateModel adds or updates a model configuration.
+func (c *Config) AddOrUpdateModel(name string, m ModelConfig) {
+	if c.Models == nil {
+		c.Models = make(map[string]ModelConfig)
+	}
+	c.Models[name] = m
+}
+
+// RemoveModel removes a model by name.
+func (c *Config) RemoveModel(name string) {
+	if c.Models != nil {
+		delete(c.Models, name)
+	}
 }
