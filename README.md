@@ -101,7 +101,7 @@ make build
 **Go install:**
 
 ```bash
-go install github.com/marcar/cude/cmd/cude@latest
+go install github.com/MARCAAAAARRON/cude/cmd/cude@latest
 ```
 
 **From GitHub Releases (Linux/macOS):**
