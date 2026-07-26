@@ -7,11 +7,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/MARCAAAAARRON/cude/internal/config"
 	"github.com/MARCAAAAARRON/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/session"
 )
 
 // Command represents a slash command available in the TUI.
@@ -28,11 +32,11 @@ type CommandRegistry struct {
 	ordered  []*Command // for /help display order
 }
 
-func NewCommandRegistry(r *router.Router) *CommandRegistry {
+func NewCommandRegistry(r *router.Router, sm *session.Manager) *CommandRegistry {
 	cr := &CommandRegistry{
 		commands: make(map[string]*Command),
 	}
-	cr.registerBuiltins(r)
+	cr.registerBuiltins(r, sm)
 	return cr
 }
 
@@ -66,7 +70,7 @@ func ParseCommand(input string) (string, string) {
 	return cmd, args
 }
 
-func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
+func (cr *CommandRegistry) registerBuiltins(r *router.Router, sm *session.Manager) {
 	// /help
 	cr.Register(&Command{
 		Name:        "help",
@@ -95,6 +99,9 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 		Aliases:     []string{"clear"},
 		Description: "Start a new session (clear conversation)",
 		Handler: func(m *Model, args string) string {
+			// Auto-save current session before clearing.
+			m.autoSaveSession()
+			
 			m.conversation = nil
 			m.currResponse = ""
 			if m.agent != nil {
@@ -103,6 +110,10 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 			if m.ready {
 				m.viewport.SetContent("")
 			}
+			// Generate a new session ID for the fresh session.
+			m.sessionID = uuid.New().String()[:8]
+			m.status.latency = 0
+			m.status.totalCost = 0
 			return IconSpark + " New session started"
 		},
 	})
@@ -178,23 +189,88 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 	// /sessions
 	cr.Register(&Command{
 		Name:        "sessions",
-		Description: "List saved sessions",
+		Description: "List saved sessions or load one: /sessions <index>",
 		Handler: func(m *Model, args string) string {
-			if m.sessionMgr == nil {
+			if sm == nil {
 				return "No session manager configured"
 			}
-			sessions, err := m.sessionMgr.ListSessions()
+			sessions, err := sm.ListSessions()
 			if err != nil {
 				return fmt.Sprintf(IconFail+" %v", err)
 			}
 			if len(sessions) == 0 {
 				return "No saved sessions"
 			}
+
+			// If an argument is provided, try to load that session.
+			if args != "" {
+				// Try as 1-based index first.
+				if idx, err := strconv.Atoi(args); err == nil && idx >= 1 && idx <= len(sessions) {
+					sessInfo := sessions[idx-1]
+					sess, err := sm.Load(sessInfo.ID)
+					if err != nil || sess == nil {
+						return fmt.Sprintf(IconFail+" Failed to load session: %v", err)
+					}
+					if m.agent != nil {
+						m.agent.ClearHistory()
+						for _, msg := range sess.History {
+							m.agent.AppendHistory(msg)
+						}
+					}
+					m.sessionID = sess.ID
+					m.conversation = nil
+					m.currResponse = ""
+					// Rebuild conversation view from history.
+					for _, msg := range sess.History {
+						switch msg.Role {
+						case "user":
+							m.conversation = append(m.conversation, ChatMessage{Role: "you", Text: msg.Content, Color: m.theme.UserLabel})
+						case "assistant":
+							m.conversation = append(m.conversation, ChatMessage{Text: msg.Content, Color: m.theme.Text})
+						}
+					}
+					m.refreshChat()
+					return fmt.Sprintf(IconOK+" Loaded session: %s", sessInfo.Title)
+				}
+
+				// Try as session ID.
+				sess, err := sm.Load(args)
+				if err != nil || sess == nil {
+					return fmt.Sprintf(IconFail+" Session %q not found", args)
+				}
+				if m.agent != nil {
+					m.agent.ClearHistory()
+					for _, msg := range sess.History {
+						m.agent.AppendHistory(msg)
+					}
+				}
+				m.sessionID = sess.ID
+				m.conversation = nil
+				m.currResponse = ""
+				for _, msg := range sess.History {
+					switch msg.Role {
+					case "user":
+						m.conversation = append(m.conversation, ChatMessage{Role: "you", Text: msg.Content, Color: m.theme.UserLabel})
+					case "assistant":
+						m.conversation = append(m.conversation, ChatMessage{Text: msg.Content, Color: m.theme.Text})
+					}
+				}
+				m.refreshChat()
+				return fmt.Sprintf(IconOK+" Loaded session: %s", sess.Title)
+			}
+
+			// List all sessions.
 			var b strings.Builder
 			b.WriteString("Saved sessions:\n")
-			for _, s := range sessions {
-				b.WriteString(fmt.Sprintf("  %s\n", s))
+			for i, s := range sessions {
+				marker := "  "
+				if s.ID == m.sessionID {
+					marker = "▸ "
+				}
+				age := formatTimeAgo(s.UpdatedAt)
+				b.WriteString(fmt.Sprintf("%s%d. [%s] %s (%d msgs, %s)\n", marker, i+1, s.ID, s.Title, s.MsgCount, age))
 			}
+			b.WriteString("\nUse /sessions <number> to load")
 			return b.String()
 		},
 	})
@@ -406,6 +482,8 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 		Aliases:     []string{"quit", "q"},
 		Description: "Exit cude",
 		Handler: func(m *Model, args string) string {
+			// Auto-save before exiting.
+			m.autoSaveSession()
 			m.quitting = true
 			return ""
 		},
@@ -466,4 +544,23 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router) {
 			return ""
 		},
 	})
+}
+
+// formatTimeAgo returns a human-friendly relative time string like "2m ago", "3h ago", "1d ago".
+func formatTimeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1d ago"
+		}
+		return fmt.Sprintf("%dd ago", days)
+	}
 }

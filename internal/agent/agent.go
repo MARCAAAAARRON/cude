@@ -51,12 +51,19 @@ type StatusEvent struct {
 	CtxUsed string
 }
 
-func (StreamTokenEvent) agentEvent() {}
-func (ToolCallEvent) agentEvent()    {}
-func (ToolResultEvent) agentEvent()  {}
-func (ApprovalRequest) agentEvent()  {}
-func (DoneEvent) agentEvent()        {}
-func (StatusEvent) agentEvent()      {}
+// EscalationEvent signals that the agent wants to switch to a stronger model.
+type EscalationEvent struct {
+	TargetModel string
+	Reason      string
+}
+
+func (StreamTokenEvent) agentEvent()  {}
+func (ToolCallEvent) agentEvent()     {}
+func (ToolResultEvent) agentEvent()   {}
+func (ApprovalRequest) agentEvent()   {}
+func (DoneEvent) agentEvent()         {}
+func (StatusEvent) agentEvent()       {}
+func (EscalationEvent) agentEvent()   {}
 
 // ToolExecutor is the interface for executing tools.
 type ToolExecutor interface {
@@ -128,6 +135,13 @@ func (a *Agent) ClearHistory() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = make([]backend.Message, 0, 64)
+}
+
+// AppendHistory adds a message to the history (used when restoring a saved session).
+func (a *Agent) AppendHistory(msg backend.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = append(a.history, msg)
 }
 
 // CompactHistory summarizes or removes older messages to save context space.
@@ -216,6 +230,14 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 			if err != nil {
 				a.consecutiveFailures++
 				if a.shouldEscalate() {
+					a.emit(EscalationEvent{
+						TargetModel: a.cfg.EscalateTarget,
+						Reason:      fmt.Sprintf("Local model failed %d times consecutively", a.consecutiveFailures),
+					})
+					// Return so the TUI can handle the switch; the request
+					// will be retried on the new backend.
+					return nil
+				} else {
 					a.emit(StreamTokenEvent{Token: "\n\n⚠ Local model is struggling. Consider switching to an API model with /model.\n"})
 				}
 			} else {

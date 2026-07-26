@@ -247,9 +247,7 @@ This project is in early development. Issues and pull requests are welcome at [g
 
 ## License
 
-<!-- TODO: Add a LICENSE file (MIT, Apache-2.0, etc.) and update this section -->
-
-No license file found. Please add one before distributing.
+This project is licensed under the [MIT License](LICENSE).
 
 ## Author
 

@@ -10,6 +10,7 @@ import (
 	"github.com/MARCAAAAARRON/cude/internal/config"
 	"github.com/MARCAAAAARRON/cude/internal/project"
 	"github.com/MARCAAAAARRON/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/session"
 	"github.com/MARCAAAAARRON/cude/internal/tools"
 	"github.com/MARCAAAAARRON/cude/internal/tui"
 )
@@ -83,9 +84,12 @@ func main() {
 	// 5. Initialize Agent Core
 	core := agent.New(cfg.Agent, be, registry)
 
-	// 6. Launch TUI
+	// 6. Initialize Session Manager
+	sm := session.NewManager(proj.Root)
+
+	// 7. Launch TUI
 	ctx := context.Background()
-	if err := tui.Run(ctx, core, r); err != nil {
+	if err := tui.Run(ctx, core, r, sm); err != nil {
 		fmt.Fprintf(os.Stderr, "cude: tui error: %v\n", err)
 		os.Exit(1)
 	}

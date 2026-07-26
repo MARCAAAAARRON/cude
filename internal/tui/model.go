@@ -14,11 +14,13 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	
+	"github.com/google/uuid"
+
 	"github.com/MARCAAAAARRON/cude/internal/agent"
 	"github.com/MARCAAAAARRON/cude/internal/config"
 	"github.com/MARCAAAAARRON/cude/internal/project"
 	"github.com/MARCAAAAARRON/cude/internal/router"
+	"github.com/MARCAAAAARRON/cude/internal/session"
 )
 
 const (
@@ -63,7 +65,8 @@ type Model struct {
 	undoStack []UndoItem
 	
 	// Sessions
-	sessionMgr interface{ ListSessions() ([]string, error) } // Minimal stub for now
+	sessionMgr *session.Manager
+	sessionID  string
 
 	// Layout State
 	showSidebar  bool
@@ -78,6 +81,7 @@ type Model struct {
 	tempName   string
 	
 	config     *config.Config
+	router     *router.Router
 }
 
 type UndoItem struct {
@@ -132,6 +136,9 @@ type status struct {
 	gitBranch    string
 	reqStartTime time.Time
 	latency      time.Duration
+	totalCost    float64 // cumulative session cost in USD
+	inputTokens  int     // tokens in from last request
+	outputTokens int     // tokens out from last request
 }
 
 func New(ctx context.Context, a *agent.Agent) Model {
@@ -178,6 +185,7 @@ func New(ctx context.Context, a *agent.Agent) Model {
 		textInput: ti,
 		theme:     defaultTheme,
 		currentTheme: "mono",
+		sessionID: uuid.New().String()[:8],
 		
 		status: status{
 			model:        "loading...",
@@ -195,10 +203,16 @@ func New(ctx context.Context, a *agent.Agent) Model {
 
 // SetRouter sets the router for slash commands (needs to be called from main.go)
 func (m *Model) SetRouter(r *router.Router) {
-	m.cmdRegistry = NewCommandRegistry(r)
+	m.cmdRegistry = NewCommandRegistry(r, m.sessionMgr)
+	m.router = r
 	if r != nil {
 		m.config = r.Config()
 	}
+}
+
+// SetSessionManager sets the session manager for persistence.
+func (m *Model) SetSessionManager(mgr *session.Manager) {
+	m.sessionMgr = mgr
 }
 
 func (m Model) Init() tea.Cmd {
@@ -229,6 +243,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.waitingApprove = false
 				m.addMessage(IconFail+" Denied", m.theme.Error)
 			case "ctrl+c":
+				m.autoSaveSession()
 				m.quitting = true
 				m.cancel()
 				return m, tea.Quit
@@ -238,6 +253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+c":
+			m.autoSaveSession()
 			m.quitting = true
 			m.cancel()
 			return m, tea.Quit
@@ -330,9 +346,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.model = e.Model
 			m.status.backend = e.Backend
 			m.status.ctxUsed = e.CtxUsed
+
+		case agent.EscalationEvent:
+			if m.router != nil && e.TargetModel != "" {
+				be, err := m.router.GetBackend(e.TargetModel)
+				if err != nil {
+					m.addMessage(fmt.Sprintf(IconFail+" Auto-escalation failed: %v", err), m.theme.Error)
+				} else {
+					m.agent.SetBackend(be)
+					cap := be.Capability()
+					m.status.model = e.TargetModel
+					m.status.backend = cap.Backend
+					m.addMessage(fmt.Sprintf("⚡ Auto-escalated to %s (%s). Reason: %s", e.TargetModel, cap.Backend, e.Reason), m.theme.Warning)
+				}
+			}
 			
 		case agent.DoneEvent:
 			m.status.state = StateIdle
+			m.status.latency = time.Since(m.status.reqStartTime)
 			if m.currResponse != "" {
 				m.conversation = append(m.conversation, ChatMessage{Text: m.currResponse, Color: m.theme.Text})
 				m.currResponse = ""
@@ -341,6 +372,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				errStr := fmt.Sprintf(IconFail+" Error: %v", e.Error)
 				m.conversation = append(m.conversation, ChatMessage{Text: errStr, Color: m.theme.Error})
 			}
+			// Auto-save session after each completed request.
+			m.autoSaveSession()
 			m.refreshChat()
 		}
 		
@@ -469,13 +502,21 @@ func (m Model) sidebarView() string {
 	b.WriteString("└─ State:   " + valStyle.Render(fmt.Sprintf("%v", m.status.state)) + "\n\n")
 	
 	b.WriteString(titleStyle.Render("WORKSPACE") + "\n")
-	b.WriteString("├─ Proj: " + valStyle.Render("cude (go)") + "\n")
-	b.WriteString("└─ Git:  " + valStyle.Render("main") + "\n\n")
+	b.WriteString("├─ Proj: " + valStyle.Render(m.status.projName) + "\n")
+	b.WriteString("└─ Git:  " + valStyle.Render(m.status.gitBranch) + "\n\n")
 	
 	b.WriteString(titleStyle.Render("PERFORMANCE") + "\n")
 	b.WriteString("├─ Ctx: " + ctxBar + "\n")
-	b.WriteString("├─ Lat: " + valStyle.Render("--") + "\n")
-	b.WriteString("└─ Cost:" + valStyle.Render("--") + "\n")
+	latStr := "--"
+	if m.status.latency > 0 {
+		latStr = m.status.latency.Truncate(time.Millisecond).String()
+	}
+	b.WriteString("├─ Lat: " + valStyle.Render(latStr) + "\n")
+	costStr := "--"
+	if m.status.totalCost > 0 {
+		costStr = fmt.Sprintf("$%.4f", m.status.totalCost)
+	}
+	b.WriteString("└─ Cost: " + valStyle.Render(costStr) + "\n")
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -590,6 +631,19 @@ func (m *Model) refreshChat() {
 func (m *Model) addMessage(text string, color string) {
 	m.conversation = append(m.conversation, ChatMessage{Text: text, Color: color})
 	m.refreshChat()
+}
+
+// autoSaveSession silently persists the current session to disk.
+func (m *Model) autoSaveSession() {
+	if m.sessionMgr == nil || m.agent == nil {
+		return
+	}
+	sess := &session.Session{
+		ID:      m.sessionID,
+		Model:   m.status.model,
+		History: m.agent.History(),
+	}
+	_ = m.sessionMgr.Save(sess) // best-effort, don't disrupt the user on failure
 }
 
 func (m *Model) handleWizardInput(input string) {

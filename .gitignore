@@ -1,5 +1,11 @@
 bin/
 cude.toml
-*.py
-*.txt
 .DS_Store
+*.bak
+
+# Scratch/migration scripts (not part of the shipped project)
+temp_*.txt
+apply_all.py
+fix.py
+patch.py
+refactor.py

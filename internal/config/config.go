@@ -34,11 +34,12 @@ type ModelConfig struct {
 
 // AgentConfig controls the agentic loop behavior.
 type AgentConfig struct {
-	MaxIterations     int  `toml:"max_iterations"`
-	AutoEscalate      bool `toml:"auto_escalate"`
-	EscalateThreshold int  `toml:"escalate_threshold"`
-	ApproveWrites     bool `toml:"approve_writes"`
-	ApproveShell      bool `toml:"approve_shell"`
+	MaxIterations     int    `toml:"max_iterations"`
+	AutoEscalate      bool   `toml:"auto_escalate"`
+	EscalateThreshold int    `toml:"escalate_threshold"`
+	EscalateTarget    string `toml:"escalate_target"`    // model name to switch to on auto-escalation
+	ApproveWrites     bool   `toml:"approve_writes"`
+	ApproveShell      bool   `toml:"approve_shell"`
 }
 
 // TUIConfig controls TUI behavior.
