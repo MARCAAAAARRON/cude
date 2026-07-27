@@ -22,7 +22,7 @@ func NewFileWriteTool(workdir string) *FileWriteTool {
 func (t *FileWriteTool) Name() string { return "file_write" }
 
 func (t *FileWriteTool) Description() string {
-	return "Edit a file using search and replace. Provide the exact text to match in 'search', and the new text in 'replace'. To create a new file, leave 'search' empty and put the content in 'replace'."
+	return "Edit a file using search and replace. Provide the exact text to match in 'search', and the new text in 'replace'. To create a new file, leave 'search' empty and put the content in 'replace'. To append to an existing file, leave 'search' empty."
 }
 
 func (t *FileWriteTool) Schema() map[string]any {
@@ -35,7 +35,7 @@ func (t *FileWriteTool) Schema() map[string]any {
 			},
 			"search": map[string]any{
 				"type":        "string",
-				"description": "Exact text to find in the file. Must match completely including indentation. Leave empty for new files.",
+				"description": "Exact text to find in the file. Must match completely including indentation. Leave empty for new files or to append to an existing file.",
 			},
 			"replace": map[string]any{
 				"type":        "string",
@@ -81,7 +81,24 @@ func (t *FileWriteTool) Execute(ctx context.Context, argsRaw json.RawMessage) (s
 	}
 
 	if args.Search == "" {
-		return "", fmt.Errorf("file exists, you must provide 'search' text to replace")
+		newContent := string(content)
+		if !strings.HasSuffix(newContent, "\n") && !strings.HasSuffix(newContent, "\r\n") {
+			if strings.Contains(newContent, "\r\n") {
+				newContent += "\r\n"
+			} else {
+				newContent += "\n"
+			}
+		}
+		newContent += args.Replace
+
+		backupPath := fullPath + ".bak"
+		_ = os.WriteFile(backupPath, content, 0644)
+
+		if err := os.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
+			return "", fmt.Errorf("failed to append to file: %w", err)
+		}
+
+		return fmt.Sprintf("Successfully appended to file %s", args.Path), nil
 	}
 
 	contentStr := string(content)
