@@ -175,13 +175,18 @@ func (a *Agent) CompactHistory() {
 
 // SystemPrompt returns the system prompt, adjusted for model tier and mode.
 func (a *Agent) SystemPrompt() string {
+	a.mu.Lock()
 	cap := a.be.Capability()
+	defs := a.tools.Definitions()
+	mode := a.mode
+	a.mu.Unlock()
+
 	prompt := apiSystemPrompt()
 	if cap.IsLocal() {
-		prompt = localSystemPrompt(a.tools.Definitions())
+		prompt = localSystemPrompt(defs)
 	}
 	
-	if a.Mode() == "architect" {
+	if mode == "architect" {
 		prompt += "\n\nCRITICAL RULE: You are currently in ARCHITECT mode. Your job is to research the codebase and write a detailed implementation plan. You are RESTRICTED from modifying files or running shell commands. You must present your plan as a final response."
 	}
 	
@@ -196,8 +201,9 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 	hasNudged := false
 	for iteration := 0; iteration < a.cfg.MaxIterations; iteration++ {
 		// 1. Build the prompt with context budget.
-		a.mu.Lock()
 		systemMsg := a.SystemPrompt()
+		
+		a.mu.Lock()
 		prompt := a.ctxSched.Build(systemMsg, a.history)
 		cap := a.be.Capability()
 		a.mu.Unlock()
