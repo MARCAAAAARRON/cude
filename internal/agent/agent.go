@@ -300,10 +300,17 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 
 			a.emit(ToolResultEvent{Name: action.ToolName, Result: result})
 
+			role := backend.RoleTool
+			content := result
+			if cap.IsLocal() {
+				role = backend.RoleUser
+				content = fmt.Sprintf("TOOL RESULT:\n%s", result)
+			}
+
 			a.mu.Lock()
 			a.history = append(a.history, backend.Message{
-				Role:    backend.RoleTool,
-				Content: result,
+				Role:    role,
+				Content: content,
 				ToolID:  action.ToolID,
 			})
 			a.mu.Unlock()
