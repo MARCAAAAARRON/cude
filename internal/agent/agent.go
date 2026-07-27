@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -340,12 +341,26 @@ func localSystemPrompt(tools []backend.ToolDef) string {
 	b.WriteString("ACTION: <tool_name>\n")
 	b.WriteString("INPUT: <json_arguments>\n")
 	b.WriteString("---\n\n")
+	b.WriteString("EXAMPLE — creating a new file:\n")
+	b.WriteString("ACTION: file_write\n")
+	b.WriteString("INPUT: {\"path\": \"hello.py\", \"search\": \"\", \"replace\": \"print('Hello!')\"}\n")
+	b.WriteString("---\n\n")
 	b.WriteString("Available tools:\n\n")
 	for _, t := range tools {
-		b.WriteString(fmt.Sprintf("- %s: %s\n", t.Name, t.Description))
+		b.WriteString(fmt.Sprintf("## %s\n%s\n", t.Name, t.Description))
+		if t.Parameters != nil {
+			paramJSON, err := json.MarshalIndent(t.Parameters, "", "  ")
+			if err == nil {
+				b.WriteString(fmt.Sprintf("Parameters: %s\n", string(paramJSON)))
+			}
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\nIf you don't need to use a tool, just respond with your answer directly.\n")
-	b.WriteString("IMPORTANT: Always use the ACTION/INPUT format when you need to read or modify files. Never guess file contents.\n")
+	b.WriteString("IMPORTANT RULES:\n")
+	b.WriteString("1. Always include ALL required parameters. For file_write, you MUST include \"path\".\n")
+	b.WriteString("2. Always use the ACTION/INPUT/--- format when you need to read or modify files.\n")
+	b.WriteString("3. Never guess file contents — read first, then edit.\n")
+	b.WriteString("4. If you don't need a tool, just respond with your answer directly.\n")
 	return b.String()
 }
 

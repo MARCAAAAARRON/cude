@@ -56,6 +56,10 @@ func (t *FileWriteTool) Execute(ctx context.Context, argsRaw json.RawMessage) (s
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
+	if args.Path == "" {
+		return "", fmt.Errorf("missing required 'path' argument. You must specify the file path to create or edit")
+	}
+
 	fullPath := filepath.Join(t.workdir, args.Path)
 	
 	// Ensure directory exists.

@@ -27,7 +27,7 @@ func NewParser() *Parser {
 	return &Parser{
 		// Matches ACTION: <name>\nINPUT: <json>\n---
 		// The (?s) flag makes . match newlines so JSON can span multiple lines.
-		actionRe: regexp.MustCompile(`(?m)^ACTION:\s*(\S+)\s*\nINPUT:\s*((?s).+?)\n---`),
+		actionRe: regexp.MustCompile(`(?m)^ACTION:\s*(\S+)\s*\nINPUT:\s*((?s).+?)(?:\n---|$)`),
 	}
 }
 
@@ -38,6 +38,12 @@ func NewParser() *Parser {
 func (p *Parser) ExtractActions(text string) ([]ParsedAction, error) {
 	matches := p.actionRe.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
+		// Fall back to fuzzy extraction for local models that don't
+		// follow the strict ACTION/INPUT/--- format perfectly.
+		fuzzy := p.FuzzyExtract(text)
+		if len(fuzzy) > 0 {
+			return fuzzy, nil
+		}
 		return nil, nil
 	}
 
