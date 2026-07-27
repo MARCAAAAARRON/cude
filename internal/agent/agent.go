@@ -257,6 +257,17 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 
 		// 6. If no actions → the model gave a final answer.
 		if len(actions) == 0 {
+			// Check if the model described file changes without using tools.
+			// If so, nudge it to actually execute (common with local models).
+			if cap.IsLocal() && a.needsNudge(responseText) && iteration < a.cfg.MaxIterations-1 {
+				a.mu.Lock()
+				a.history = append(a.history, backend.Message{
+					Role:    backend.RoleUser,
+					Content: "You described the changes but did not execute them. You MUST use the ACTION/INPUT/--- format to actually make the changes. Do not describe — execute. Do it now.",
+				})
+				a.mu.Unlock()
+				continue
+			}
 			return nil
 		}
 
@@ -324,6 +335,41 @@ func (a *Agent) shouldEscalate() bool {
 	return a.cfg.AutoEscalate && a.consecutiveFailures >= a.cfg.EscalateThreshold
 }
 
+// needsNudge returns true if the model's response talks about file changes
+// without actually using a tool (common with smaller local models).
+func (a *Agent) needsNudge(response string) bool {
+	lower := strings.ToLower(response)
+	// Phrases that suggest the model described changes instead of executing them.
+	indicators := []string{
+		"here's the updated",
+		"here is the updated",
+		"i've updated",
+		"i have updated",
+		"i've added",
+		"i have added",
+		"i've modified",
+		"i have modified",
+		"the file now",
+		"your file now",
+		"has been updated",
+		"has been modified",
+		"has been added",
+		"updated version",
+		"modified version",
+		"here's the code",
+		"here is the code",
+		"the updated code",
+		"save this as",
+		"save it as",
+	}
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Agent) emit(e Event) {
 	select {
 	case a.events <- e:
@@ -337,13 +383,23 @@ func (a *Agent) emit(e Event) {
 func localSystemPrompt(tools []backend.ToolDef) string {
 	var b strings.Builder
 	b.WriteString("You are cude, a coding assistant that helps users read, edit, and manage code.\n\n")
-	b.WriteString("When you need to perform an action, respond with EXACTLY this format:\n")
+	b.WriteString("CRITICAL: When the user asks you to create, edit, or modify a file, you MUST use the ACTION/INPUT format below.\n")
+	b.WriteString("NEVER just describe or explain what changes should be made. ALWAYS execute them using tools.\n\n")
+	b.WriteString("Tool call format — respond with EXACTLY this:\n")
 	b.WriteString("ACTION: <tool_name>\n")
 	b.WriteString("INPUT: <json_arguments>\n")
 	b.WriteString("---\n\n")
-	b.WriteString("EXAMPLE — creating a new file:\n")
+	b.WriteString("EXAMPLE 1 — creating a new file:\n")
 	b.WriteString("ACTION: file_write\n")
-	b.WriteString("INPUT: {\"path\": \"hello.py\", \"search\": \"\", \"replace\": \"print('Hello!')\"}\n")
+	b.WriteString("INPUT: {\"path\": \"hello.py\", \"search\": \"\", \"replace\": \"#!/usr/bin/env python3\\nprint('Hello!')\\n\"}\n")
+	b.WriteString("---\n\n")
+	b.WriteString("EXAMPLE 2 — editing an existing file (replace 'search' text with 'replace' text):\n")
+	b.WriteString("ACTION: file_write\n")
+	b.WriteString("INPUT: {\"path\": \"main.py\", \"search\": \"print('Hello!')\", \"replace\": \"def add(a, b):\\n    return a + b\\n\\nprint(add(2, 3))\"}\n")
+	b.WriteString("---\n\n")
+	b.WriteString("EXAMPLE 3 — reading a file first (always read before editing):\n")
+	b.WriteString("ACTION: file_read\n")
+	b.WriteString("INPUT: {\"path\": \"main.py\"}\n")
 	b.WriteString("---\n\n")
 	b.WriteString("Available tools:\n\n")
 	for _, t := range tools {
@@ -357,10 +413,11 @@ func localSystemPrompt(tools []backend.ToolDef) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("IMPORTANT RULES:\n")
-	b.WriteString("1. Always include ALL required parameters. For file_write, you MUST include \"path\".\n")
-	b.WriteString("2. Always use the ACTION/INPUT/--- format when you need to read or modify files.\n")
-	b.WriteString("3. Never guess file contents — read first, then edit.\n")
-	b.WriteString("4. If you don't need a tool, just respond with your answer directly.\n")
+	b.WriteString("1. ALWAYS use ACTION/INPUT/--- to make changes. NEVER just describe them.\n")
+	b.WriteString("2. Always include ALL required parameters. For file_write, you MUST include \"path\".\n")
+	b.WriteString("3. Always read a file with file_read BEFORE editing it with file_write.\n")
+	b.WriteString("4. If the user asks you to create or modify code, USE THE TOOLS — do not just explain.\n")
+	b.WriteString("5. If you don't need a tool (e.g. answering a question), respond directly.\n")
 	return b.String()
 }
 
