@@ -85,9 +85,18 @@ func (t *FileWriteTool) Execute(ctx context.Context, argsRaw json.RawMessage) (s
 	}
 
 	contentStr := string(content)
-	
+
+	// Detect the file's line ending style so we can preserve it.
+	useCRLF := strings.Contains(contentStr, "\r\n")
+
+	// Normalize both content and search/replace to \n for matching.
+	// This is critical on Windows: files have \r\n but models always output \n.
+	normalizedContent := strings.ReplaceAll(contentStr, "\r\n", "\n")
+	normalizedSearch := strings.ReplaceAll(args.Search, "\r\n", "\n")
+	normalizedReplace := strings.ReplaceAll(args.Replace, "\r\n", "\n")
+
 	// Count occurrences.
-	count := strings.Count(contentStr, args.Search)
+	count := strings.Count(normalizedContent, normalizedSearch)
 	if count == 0 {
 		return "", fmt.Errorf("search text not found in file. Ensure exact match including whitespace/indentation")
 	}
@@ -95,8 +104,13 @@ func (t *FileWriteTool) Execute(ctx context.Context, argsRaw json.RawMessage) (s
 		return "", fmt.Errorf("search text found %d times, it must be unique. Provide more context", count)
 	}
 
-	// Apply replacement.
-	newContent := strings.Replace(contentStr, args.Search, args.Replace, 1)
+	// Apply replacement on normalized content.
+	newContent := strings.Replace(normalizedContent, normalizedSearch, normalizedReplace, 1)
+
+	// Restore original line ending style.
+	if useCRLF {
+		newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+	}
 
 	// Create backup before writing.
 	backupPath := fullPath + ".bak"
