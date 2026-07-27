@@ -392,18 +392,24 @@ func (a *Agent) needsNudge(response string) bool {
 	lower := strings.ToLower(response)
 	// Phrases that suggest the model described changes instead of executing them.
 	indicators := []string{
-		"here's the updated file",
-		"here is the updated file",
-		"i've updated the file",
-		"i have updated the file",
-		"i've modified the file",
-		"i have modified the file",
-		"your file has been updated",
-		"the file has been updated",
-		"the file has been modified",
-		"save this as",
-		"save it as",
-		"replace the contents of",
+		"here's the updated",
+		"here is the updated",
+		"i've updated",
+		"i have updated",
+		"i've modified",
+		"i have modified",
+		"has been updated",
+		"has been modified",
+		"save this",
+		"save it",
+		"replace the contents",
+		"use the file_write",
+		"the fixed code",
+		"here is the complete code",
+		"here's the complete code",
+		"sure, i can help with that. here is the",
+		"here is the new",
+		"here's the new",
 	}
 	for _, ind := range indicators {
 		if strings.Contains(lower, ind) {

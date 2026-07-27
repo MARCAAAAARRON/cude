@@ -52,6 +52,9 @@ func (p *Parser) ExtractActions(text string) ([]ParsedAction, error) {
 		name := strings.TrimSpace(match[1])
 		argsRaw := strings.TrimSpace(match[2])
 
+		// Clean up markdown code blocks if the model wrapped the JSON.
+		argsRaw = cleanMarkdownJSON(argsRaw)
+
 		// Validate that the args look like JSON.
 		if !isJSONish(argsRaw) {
 			// Try to recover: wrap in a simple object.
@@ -109,4 +112,22 @@ func isJSONish(s string) bool {
 		return json.Unmarshal([]byte(s), &js) == nil
 	}
 	return false
+}
+
+// cleanMarkdownJSON strips markdown backticks from a string.
+func cleanMarkdownJSON(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		idx := strings.Index(s, "\n")
+		if idx != -1 {
+			s = s[idx+1:]
+		} else {
+			s = strings.TrimPrefix(s, "```json")
+			s = strings.TrimPrefix(s, "```")
+		}
+	}
+	if strings.HasSuffix(s, "```") {
+		s = strings.TrimSuffix(s, "```")
+	}
+	return strings.TrimSpace(s)
 }
