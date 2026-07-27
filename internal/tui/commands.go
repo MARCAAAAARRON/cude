@@ -463,6 +463,33 @@ func (cr *CommandRegistry) registerBuiltins(r *router.Router, sm *session.Manage
 		},
 	})
 
+	// /mode
+	cr.Register(&Command{
+		Name:        "mode",
+		Description: "Switch mode: /mode <architect|execute>",
+		Handler: func(m *Model, args string) string {
+			if m.agent == nil {
+				return IconFail + " No active agent"
+			}
+			
+			mode := strings.ToLower(args)
+			if mode == "" {
+				return fmt.Sprintf("Current mode: %s. Use /mode <architect|execute> to switch.", m.agent.Mode())
+			}
+			
+			if mode != "architect" && mode != "execute" {
+				return fmt.Sprintf(IconFail + " Unknown mode %q. Available: architect, execute", mode)
+			}
+			
+			m.agent.SetMode(mode)
+			
+			if mode == "architect" {
+				return IconSpark + " Mode set to: architect (Read-only planning mode)"
+			}
+			return IconSpark + " Mode set to: execute (Autonomous editing mode)"
+		},
+	})
+
 	// /cost
 	cr.Register(&Command{
 		Name:        "cost",

@@ -84,6 +84,9 @@ type Agent struct {
 	events   chan Event
 	mu       sync.Mutex
 
+	// Mode tracking ("execute" or "architect")
+	mode string
+
 	// Escalation tracking.
 	consecutiveFailures int
 }
@@ -98,11 +101,26 @@ func New(cfg config.AgentConfig, be backend.Backend, tools ToolExecutor) *Agent 
 		ctxSched: NewContextScheduler(be.Capability()),
 		history:  make([]backend.Message, 0, 64),
 		events:   make(chan Event, 128),
+		mode:     "execute",
 	}
 }
 
 // Events returns the channel the TUI should read from.
 func (a *Agent) Events() <-chan Event { return a.events }
+
+// SetMode sets the current operational mode of the agent ("execute" or "architect").
+func (a *Agent) SetMode(mode string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mode = mode
+}
+
+// Mode returns the current operational mode.
+func (a *Agent) Mode() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.mode
+}
 
 // SetBackend swaps the model/backend (e.g. on escalation or user /model command).
 func (a *Agent) SetBackend(be backend.Backend) {
@@ -155,13 +173,19 @@ func (a *Agent) CompactHistory() {
 	}
 }
 
-// SystemPrompt returns the system prompt, adjusted for model tier.
+// SystemPrompt returns the system prompt, adjusted for model tier and mode.
 func (a *Agent) SystemPrompt() string {
 	cap := a.be.Capability()
+	prompt := apiSystemPrompt()
 	if cap.IsLocal() {
-		return localSystemPrompt(a.tools.Definitions())
+		prompt = localSystemPrompt(a.tools.Definitions())
 	}
-	return apiSystemPrompt()
+	
+	if a.Mode() == "architect" {
+		prompt += "\n\nCRITICAL RULE: You are currently in ARCHITECT mode. Your job is to research the codebase and write a detailed implementation plan. You are RESTRICTED from modifying files or running shell commands. You must present your plan as a final response."
+	}
+	
+	return prompt
 }
 
 func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
@@ -187,7 +211,18 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 		// 2. Stream from model.
 		var tools []backend.ToolDef
 		if cap.SupportsTools {
-			tools = a.tools.Definitions()
+			allTools := a.tools.Definitions()
+			
+			// If in architect mode, filter out mutating tools
+			if a.Mode() == "architect" {
+				for _, t := range allTools {
+					if t.Name != "file_write" && t.Name != "shell_exec" {
+						tools = append(tools, t)
+					}
+				}
+			} else {
+				tools = allTools
+			}
 		}
 
 		ch, err := a.be.Chat(ctx, prompt, tools)

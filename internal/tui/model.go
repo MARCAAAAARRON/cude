@@ -548,7 +548,11 @@ func (m Model) inputView() string {
 	if m.waitingApprove {
 		content = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Warning)).Render("Press 'y' to approve, 'n' to deny.")
 	} else {
-		content = "> " + m.textInput.View()
+		promptPrefix := "> "
+		if m.agent != nil && m.agent.Mode() == "architect" {
+			promptPrefix = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Warning)).Render("[architect]") + " > "
+		}
+		content = promptPrefix + m.textInput.View()
 	}
 
 	return lipgloss.NewStyle().
