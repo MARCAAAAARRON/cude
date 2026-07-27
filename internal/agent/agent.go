@@ -169,6 +169,7 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 	a.history = append(a.history, backend.Message{Role: backend.RoleUser, Content: userMsg})
 	a.mu.Unlock()
 
+	hasNudged := false
 	for iteration := 0; iteration < a.cfg.MaxIterations; iteration++ {
 		// 1. Build the prompt with context budget.
 		a.mu.Lock()
@@ -259,7 +260,9 @@ func (a *Agent) runLoop(ctx context.Context, userMsg string) error {
 		if len(actions) == 0 {
 			// Check if the model described file changes without using tools.
 			// If so, nudge it to actually execute (common with local models).
-			if cap.IsLocal() && a.needsNudge(responseText) && iteration < a.cfg.MaxIterations-1 {
+			// We only nudge ONCE per request to prevent infinite loops.
+			if cap.IsLocal() && !hasNudged && a.needsNudge(responseText) && iteration < a.cfg.MaxIterations-1 {
+				hasNudged = true
 				a.mu.Lock()
 				a.history = append(a.history, backend.Message{
 					Role:    backend.RoleUser,
@@ -341,26 +344,18 @@ func (a *Agent) needsNudge(response string) bool {
 	lower := strings.ToLower(response)
 	// Phrases that suggest the model described changes instead of executing them.
 	indicators := []string{
-		"here's the updated",
-		"here is the updated",
-		"i've updated",
-		"i have updated",
-		"i've added",
-		"i have added",
-		"i've modified",
-		"i have modified",
-		"the file now",
-		"your file now",
-		"has been updated",
-		"has been modified",
-		"has been added",
-		"updated version",
-		"modified version",
-		"here's the code",
-		"here is the code",
-		"the updated code",
+		"here's the updated file",
+		"here is the updated file",
+		"i've updated the file",
+		"i have updated the file",
+		"i've modified the file",
+		"i have modified the file",
+		"your file has been updated",
+		"the file has been updated",
+		"the file has been modified",
 		"save this as",
 		"save it as",
+		"replace the contents of",
 	}
 	for _, ind := range indicators {
 		if strings.Contains(lower, ind) {
