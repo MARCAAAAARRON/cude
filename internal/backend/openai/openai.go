@@ -29,9 +29,14 @@ func New(endpoint, apiKey, model string, contextWindow int, tier string) (*Backe
 	if endpoint != "" {
 		u, err := url.Parse(endpoint)
 		if err == nil && (u.Path == "" || u.Path == "/") {
-			// Auto-append /v1 for common local OpenAI-compatible servers (LM Studio, vLLM, etc.)
+			// Auto-append /v1 for common local OpenAI-compatible servers
 			endpoint = strings.TrimRight(endpoint, "/") + "/v1"
 		}
+		
+		// openai-go uses net/url.ResolveReference which will STRIP the last path segment 
+		// if it doesn't end with a slash. (e.g. /v1 + chat/completions = /chat/completions)
+		// We MUST ensure the base URL ends with exactly one trailing slash.
+		endpoint = strings.TrimRight(endpoint, "/") + "/"
 		opts = append(opts, option.WithBaseURL(endpoint))
 	}
 	if apiKey != "" {
